@@ -1,0 +1,312 @@
+# Load necessary packages
+library(dplyr)
+library(tidyr)
+library(lme4)
+library(ggplot2)
+library(lmerTest)
+
+library(readr)
+Domains <- read_delim("C:/Users/kmyslins/Desktop/Partner choice/final study 1/Domains.csv", 
+                      delim = ";", escape_double = FALSE, trim_ws = TRUE)
+View(Domains)
+
+# Recode categorical variables for clarity
+Domains <- Domains %>%
+  mutate(
+    Gender = factor(Gender, labels = c("Female", "Male")),
+    Condition = factor(Condition, labels = c("Fairness", "Competence")),
+  )
+
+
+# Prepare long-format for partner choice (within-domain)
+Domains_long_choice_within <- Domains %>%
+  pivot_longer(cols = c(Choice_within1, Choice_within2),
+               names_to = "Trial",
+               values_to = "Choice") %>%
+  mutate(HQ_Chosen = ifelse(Choice == 2, 1, 0))  # 2 = HQ character
+
+# Logistic regression
+model_choice_within <- glm(HQ_Chosen ~ age_months + Condition,
+                           data = Domains_long_choice_within,
+                           family = binomial)
+summary(model_choice_within)
+
+#Choice between
+Domains_long_choice_between <- Domains %>%
+  pivot_longer(cols = c(Choice_between1, Choice_between2),
+               names_to = "Trial",
+               values_to = "Choice") %>%
+  mutate(HQ_Chosen = ifelse(Choice == 1, 1, 0))  # UWAGA: 1 = high-quality
+
+# Model regresji logistycznej: czy wiek przewiduje wybór HQ partnera
+model_choice_between <- glm(HQ_Chosen ~ age_months,
+                            data = Domains_long_choice_between,
+                            family = binomial)
+summary(model_choice_between)
+
+table_between <- table(Domains_long_choice_between$HQ_Chosen)
+table_between
+
+# Test chi-kwadrat
+chisq.test(table_between)
+
+# Percentages
+n_total <- sum(table_between)
+n_HQ <- table_between["1"]
+n_LQ <- table_between["0"]
+prop_HQ <- n_HQ / n_total
+
+cat(sprintf("HQ chosen: %d (%.1f%%), LQ chosen: %d (%.1f%%), N = %d\n",
+            n_HQ, 100 * prop_HQ, n_LQ, 100 * (1 - prop_HQ), n_total))
+
+
+#filtered
+Domains_filtered <- Domains %>%
+  filter(Be_friend %in% c(1, 2)) %>%
+  mutate(
+    Friend_HQ = ifelse(Be_friend == 2, 1, 0)  # 1 = HQ partner chosen, 0 = LQ
+  )
+
+# Logistic model-friend choice
+model_friend <- glm(Friend_HQ ~ age_months + Condition,
+                    data = Domains_filtered,
+                    family = binomial)
+
+summary(model_friend)
+
+friend_table <- table(Domains$Be_friend)
+friend_valid <- friend_table[c("1", "2")]  # tylko LQ i HQ
+
+# Test chi²
+chi_result <- chisq.test(friend_valid)
+chi_result
+
+#  HQ and LQ partners friend
+n_HQ <- friend_valid["2"]
+n_LQ <- friend_valid["1"]
+n_total <- sum(friend_valid)
+
+prop_HQ <- n_HQ / n_total
+SE_HQ <- sqrt(prop_HQ * (1 - prop_HQ) / n_total)
+
+prop_HQ
+SE_HQ
+
+
+Domains$Condition <- factor(Domains$Condition,
+                            levels = c(1, 2),
+                            labels = c("Fairness", "Competence"))
+#liking
+library(tidyverse)
+
+Domains_long_liking <- Domains %>%
+  select(ID, age_months, Condition, Gender, Liking_ch1, Liking_ch2) %>%
+  pivot_longer(cols = c(Liking_ch1, Liking_ch2),
+               names_to = "Character",
+               values_to = "Liking") %>%
+  mutate(
+    Character = recode(Character, "Liking_ch1" = "Character 1", "Liking_ch2" = "Character 2")
+  )
+
+
+model_liking <- lmer(Liking ~ Character * Condition * age_months + (1 | ID), data = Domains_long_liking)
+summary(model_liking)
+
+Domains_long_liking %>%
+  group_by(Condition, Character) %>%
+  summarise(
+    Mean = mean(Liking, na.rm = TRUE),
+    SD = sd(Liking, na.rm = TRUE),
+    n = n()
+  )
+
+# Test t  HQ i LQ in Condition
+fair_t <- t.test(Liking ~ Character, 
+                 data = filter(Domains_long_liking, Condition == "Fairness"), 
+                 paired = TRUE)
+comp_t <- t.test(Liking ~ Character, 
+                 data = filter(Domains_long_liking, Condition == "Competence"), 
+                 paired = TRUE)
+
+fair_t
+comp_t
+
+
+# M i SD
+Domains_long_liking %>%
+  group_by(Condition, Character) %>%
+  summarise(
+    M = mean(Liking, na.rm = TRUE),
+    SD = sd(Liking, na.rm = TRUE),
+    n = n()
+  )
+
+
+#within generalization
+# Create long format for within-domain ratings
+within_long <- Domains %>%
+  select(ID, age_months, Condition,
+         Within1_ch1, Within1_ch2,
+         Within2_ch1, Within2_ch2) %>%
+  pivot_longer(cols = starts_with("Within"),
+               names_to = c("Time", "Character"),
+               names_pattern = "Within(\\d)_ch(\\d)",
+               values_to = "Rating") %>%
+  mutate(Character = factor(Character),
+         Time = factor(Time))
+
+# Fit mixed model for within-domain generalization
+model_within <- lmer(Rating ~ Character * Condition * age_months + (1 | ID), data = within_long)
+summary(model_within)
+
+
+
+#  HQ vs LQ in within-domain
+table_within <- table(Domains_long_choice_within$HQ_Chosen)
+table_within
+
+# Test chi-kwadrat
+chisq.test(table_within)
+
+# Percentage
+n_total <- sum(table_within)
+n_HQ <- table_within["1"]
+prop_HQ <- n_HQ / n_total
+se_HQ <- sqrt((prop_HQ * (1 - prop_HQ)) / n_total)
+
+cat(sprintf("HQ chosen: %d/%.0f (%.1f%%), SE = %.3f\n", 
+            n_HQ, n_total, prop_HQ * 100, se_HQ))
+
+
+
+#between
+# Create long format for between-domain ratings
+between_long <- Domains %>%
+  select(ID, age_months, Condition,
+         Between1_ch1, Between1_ch2,
+         Between2_ch1, Between2_ch2) %>%
+  pivot_longer(cols = starts_with("Between"),
+               names_to = c("Time", "Character"),
+               names_pattern = "Between(\\d)_ch(\\d)",
+               values_to = "Rating") %>%
+  mutate(Character = factor(Character),
+         Time = factor(Time))
+
+# Fit mixed model for between-domain generalization
+model_between <- lmer(Rating ~ Character * Condition * age_months + (1 | ID), data = between_long)
+summary(model_between)
+
+
+
+
+# long-format for within ratings
+within_long <- Domains %>%
+  pivot_longer(cols = c(Within1_ch1, Within1_ch2, Within2_ch1, Within2_ch2),
+               names_to = c("Trial", "Character"),
+               names_pattern = "Within(\\d)_ch(\\d)",
+               values_to = "Rating") %>%
+  mutate(Domain = "within")
+
+between_long <- Domains %>%
+  pivot_longer(cols = c(Between1_ch1, Between1_ch2, Between2_ch1, Between2_ch2),
+               names_to = c("Trial", "Character"),
+               names_pattern = "Between(\\d)_ch(\\d)",
+               values_to = "Rating") %>%
+  mutate(Domain = "between")
+
+# Combine both
+ratings_long <- bind_rows(within_long, between_long) %>%
+  mutate(
+    Condition = factor(Condition, labels = c("Fairness", "Competence")),
+    Character = factor(Character, labels = c("ch1", "ch2")),
+    age_years = Domains$age_years[match(ID, Domains$ID)]
+  )
+
+ggplot(ratings_long, aes(x = age_years, y = Rating, color = Character, fill = Character)) +
+  geom_smooth(method = "lm", se = TRUE, alpha = 0.2) +
+  facet_grid(Condition ~ Domain) +
+  labs(
+    title = "Trait ratings by age and domain",
+    x = "Age (years)",
+    y = "Rating",
+    color = "Character"
+  ) +
+  theme_minimal()
+
+
+
+
+choice_between <- Domains %>%
+  pivot_longer(cols = c(Choice_between1, Choice_between2),
+               names_to = "Trial",
+               values_to = "Choice") %>%
+  mutate(HQ_Chosen = ifelse(Choice == 1, 1, 0))  # 1 = high-quality
+
+# Logistic regression model: predicting choice based on age
+model_between_choice <- glm(HQ_Chosen ~ age_years,
+                            data = choice_between,
+                            family = binomial)
+
+# Prediction data across age range
+newdata <- data.frame(age_years = seq(5, 9, by = 0.1))
+newdata$predicted <- predict(model_between_choice, newdata, type = "response")
+se <- predict(model_between_choice, newdata, type = "link", se.fit = TRUE)$se.fit
+logit <- predict(model_between_choice, newdata, type = "link")
+newdata$lower <- plogis(logit - 1.96 * se)
+newdata$upper <- plogis(logit + 1.96 * se)
+
+# Plot: Probability of choosing high-quality partner as function of age
+ggplot(newdata, aes(x = age_years, y = predicted)) +
+  geom_line(color = "blue", size = 1.2) +
+  geom_ribbon(aes(ymin = lower, ymax = upper), alpha = 0.3, fill = "gray") +
+  labs(
+    title = "Partner choice (between-domain) as a function of age",
+    x = "Age (years)",
+    y = "Probability of choosing the high-quality partner"
+  ) +
+  theme_minimal()
+
+
+
+liking_long <- Domains %>%
+  pivot_longer(cols = c(Liking_ch1, Liking_ch2),
+               names_to = "Character",
+               values_to = "Liking") %>%
+  mutate(
+    Character = recode(Character,
+                       "Liking_ch1" = "Character 1",
+                       "Liking_ch2" = "Character 2"),
+    Condition = factor(Condition, labels = c("Fairness", "Competence"))
+  )
+
+
+ggplot(liking_long, aes(x = age_years, y = Liking, color = Character)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(method = "lm", se = TRUE) +
+  facet_wrap(~Condition) +
+  scale_y_continuous(limits = c(1, 5), breaks = 1:5) +
+  labs(
+    title = "Liking of the characters by age and condition",
+    x = "Age (years)",
+    y = "Liking (1–5 scale)",
+    color = "Character"
+  ) +
+  theme_minimal()
+
+liking_long$age_years <- as.numeric(as.character(liking_long$age_years))
+
+ggplot(liking_long, aes(x = age_years, y = Liking, color = Character)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(method = "lm", se = TRUE) +
+  facet_wrap(~Condition) +
+  scale_y_continuous(limits = c(1, 5), breaks = 1:5) +
+  labs(
+    title = "Liking of the characters by age and condition",
+    x = "Age (years)",
+    y = "Liking (1–5 scale)",
+    color = "Character"
+  ) +
+  theme_minimal()
+
+
+
